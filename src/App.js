@@ -1,4 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase =
+  process.env.REACT_APP_SUPABASE_URL && process.env.REACT_APP_SUPABASE_ANON_KEY
+    ? createClient(process.env.REACT_APP_SUPABASE_URL, process.env.REACT_APP_SUPABASE_ANON_KEY)
+    : null;
+const SUPABASE_TABLE = "pd1_flashcards";
 
 const WEEKS = [
   { week: 1, title: "Fundamentals & Data Modeling", topics: ["Objects, fields, relationships (lookup/master-detail/many-to-many)", "Schema builder", "Data import/export, Data Loader", "Deduplication & validation rules"] },
@@ -64,8 +71,49 @@ export default function App() {
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // Last generated set for each week, saved to Supabase: { "1": [...], "2": [...] }
+  const [cardsByWeek, setCardsByWeek] = useState({});
 
   const week = WEEKS.find(w => w.week === selectedWeek);
+
+  useEffect(() => {
+    if (!supabase) return;
+    (async () => {
+      const { data, error: loadError } = await supabase
+        .from(SUPABASE_TABLE)
+        .select("cards_by_week, selected_week")
+        .eq("id", 1)
+        .maybeSingle();
+      if (loadError) {
+        console.error("Supabase load failed", loadError);
+        return;
+      }
+      if (data) {
+        const saved = data.cards_by_week || {};
+        const wk = data.selected_week || 1;
+        setCardsByWeek(saved);
+        setSelectedWeek(wk);
+        setCards(saved[wk] || []);
+      }
+    })();
+  }, []);
+
+  const save = async (nextCardsByWeek, nextWeek) => {
+    if (!supabase) return;
+    const { error: saveError } = await supabase.from(SUPABASE_TABLE).upsert({
+      id: 1,
+      cards_by_week: nextCardsByWeek,
+      selected_week: nextWeek,
+      updated_at: new Date().toISOString(),
+    });
+    if (saveError) console.error("Supabase save failed", saveError);
+  };
+
+  const selectWeek = (wk) => {
+    setSelectedWeek(wk);
+    setCards(cardsByWeek[wk] || []);
+    save(cardsByWeek, wk);
+  };
 
   const generate = async () => {
     setLoading(true);
@@ -95,6 +143,9 @@ Keep questions concise and exam-style. Keep answers under 2 sentences.`,
       const text = data.content?.find(b => b.type === "text")?.text || "[]";
       const parsed = JSON.parse(text);
       setCards(parsed);
+      const nextCardsByWeek = { ...cardsByWeek, [selectedWeek]: parsed };
+      setCardsByWeek(nextCardsByWeek);
+      save(nextCardsByWeek, selectedWeek);
     } catch {
       setError("Failed to generate cards. Is the server running?");
     }
@@ -125,7 +176,7 @@ Keep questions concise and exam-style. Keep answers under 2 sentences.`,
         <div style={{ display: "flex", gap: 12, marginBottom: 40, justifyContent: "center", flexWrap: "wrap" }}>
           <select
             value={selectedWeek}
-            onChange={(e) => { setSelectedWeek(Number(e.target.value)); setCards([]); }}
+            onChange={(e) => selectWeek(Number(e.target.value))}
             style={{
               background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0",
               padding: "10px 16px", borderRadius: 8, fontSize: 14, fontFamily: "inherit",
