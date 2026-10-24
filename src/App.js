@@ -1,10 +1,6 @@
 import { useState, useEffect } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { supabase, useSession, authHeaders } from "./pd1hub";
 
-const supabase =
-  process.env.REACT_APP_SUPABASE_URL && process.env.REACT_APP_SUPABASE_ANON_KEY
-    ? createClient(process.env.REACT_APP_SUPABASE_URL, process.env.REACT_APP_SUPABASE_ANON_KEY)
-    : null;
 const SUPABASE_TABLE = "pd1_flashcards";
 
 const WEEKS = [
@@ -67,6 +63,7 @@ function FlashCard({ card, index }) {
 }
 
 export default function App() {
+  const userId = useSession().user.id;
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -77,12 +74,11 @@ export default function App() {
   const week = WEEKS.find(w => w.week === selectedWeek);
 
   useEffect(() => {
-    if (!supabase) return;
     (async () => {
       const { data, error: loadError } = await supabase
         .from(SUPABASE_TABLE)
         .select("cards_by_week, selected_week")
-        .eq("id", 1)
+        .eq("user_id", userId)
         .maybeSingle();
       if (loadError) {
         console.error("Supabase load failed", loadError);
@@ -96,16 +92,15 @@ export default function App() {
         setCards(saved[wk] || []);
       }
     })();
-  }, []);
+  }, [userId]);
 
   const save = async (nextCardsByWeek, nextWeek) => {
-    if (!supabase) return;
     const { error: saveError } = await supabase.from(SUPABASE_TABLE).upsert({
-      id: 1,
+      user_id: userId,
       cards_by_week: nextCardsByWeek,
       selected_week: nextWeek,
       updated_at: new Date().toISOString(),
-    });
+    }, { onConflict: "user_id" });
     if (saveError) console.error("Supabase save failed", saveError);
   };
 
@@ -123,7 +118,7 @@ export default function App() {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 1500,
